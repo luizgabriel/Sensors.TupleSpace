@@ -16,10 +16,11 @@ import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.lang.NumberFormatException
 import kotlin.random.Random
 
 
-fun String.toSensorType(): SensorType {
+private fun String.toSensorType(): SensorType {
     return when (this) {
         "Temperatura" -> SensorType.TEMPERATURE
         "Umidade" -> SensorType.HUMIDITY
@@ -33,45 +34,54 @@ fun Sensor() {
     val (registered, setRegistered) = remember { mutableStateOf(false) }
     val (started, setStarted) = remember { mutableStateOf(false) }
     val (name, setName) = remember { mutableStateOf("") }
-    val (value, setValue) = remember { mutableStateOf(Random.nextInt(-100, 200)) }
-    val (min, setMin) = remember { mutableStateOf(Random.nextInt(-100, 100)) }
-    val (max, setMax) = remember { mutableStateOf(Random.nextInt(100, 200)) }
+    val (value, setValue) = remember { mutableStateOf(Random.nextInt(-100, 200).toString()) }
+    val (min, setMin) = remember { mutableStateOf(Random.nextInt(-100, 100).toString()) }
+    val (max, setMax) = remember { mutableStateOf(Random.nextInt(100, 200).toString()) }
     val (selectedUnit, setSelectedUnit) = remember { mutableStateOf(0) }
     val items = listOf("Temperatura", "Umidade", "Velocidade")
-    val service = remember<NotificationService> { TupleSpaceNotificationService() }
+    val (service, setService) = remember { mutableStateOf<NotificationService?>(null) }
     val coroutineScope = rememberCoroutineScope()
+    val isRegisterEnabled = name.isNotBlank() && service != null && !registered;
 
-    DisposableEffect(true) {
-        onDispose {
-            service.terminate()
-        }
+    LaunchedEffect(true) {
+        setService(TupleSpaceNotificationService.lookupForSpace())
     }
 
     LaunchedEffect(started, min, max) {
         while (started) {
-            setValue(Random.nextInt((min * 1.1).toInt(), (max * 1.1).toInt()))
+            try {
+                setValue(Random.nextInt((min.toInt() * 1.3).toInt(), (max.toInt() * 1.3).toInt()).toString())
+            } catch (e: NumberFormatException) {
+                e.printStackTrace(System.err)
+            }
             delay(1000)
         }
     }
 
-    LaunchedEffect(service, registered, value, min, max) {
-        if (!registered) return@LaunchedEffect
+    LaunchedEffect(registered, service, value, min, max) {
+        if (!registered || service == null) return@LaunchedEffect
 
-        val type = items[selectedUnit].toSensorType()
-        val message = if (value > max) {
-            "Value above maximum allowed. (${value} > ${max})"
-        } else {
-            "Value bellow minimum allowed. (${value} < ${min})"
+        try {
+            service.notify(
+                SensorEntry.create(
+                    name,
+                    items[selectedUnit].toSensorType(),
+                    value.toInt(),
+                    min.toInt(),
+                    max.toInt()
+                )
+            )
+        } catch (e: NumberFormatException) {
+            e.printStackTrace(System.err)
         }
+    }
 
-        val shouldLaunchWarning = value < min || value > max
+    val onRegister = {
+        setRegistered(true)
+    }
 
-        coroutineScope.launch(Dispatchers.IO) {
-            if (shouldLaunchWarning)
-                service.notifySensorWarning(type, name, message)
-
-            println((service as TupleSpaceNotificationService).readEntriesByType(SensorType.VELOCITY))
-        }
+    val onToggleAutomaticSensor = {
+        setStarted(!started)
     }
 
     MaterialTheme {
@@ -124,17 +134,14 @@ fun Sensor() {
                 Text("Controle", fontSize = 15.sp, modifier = Modifier.padding(bottom = 5.dp, top = 10.dp))
                 Row {
                     Button(
-                        enabled = name.isNotBlank() && !registered,
+                        enabled = isRegisterEnabled,
                         modifier = Modifier.padding(end = 5.dp),
-                        onClick = {
-                            setRegistered(true)
-                        }) {
+                        onClick = onRegister
+                    ) {
                         Text("Cadastrar Sensor")
                     }
 
-                    Button(enabled = registered, onClick = {
-                        setStarted(!started)
-                    }) {
+                    Button(enabled = registered, onClick = onToggleAutomaticSensor) {
                         Text(
                             text = when (started) {
                                 true -> "Parar Sensor Automático"
@@ -147,6 +154,7 @@ fun Sensor() {
         }
     }
 }
+
 
 fun main() = application {
     Window(
